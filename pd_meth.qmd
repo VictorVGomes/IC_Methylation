@@ -1,0 +1,24 @@
+---
+title: "ParkinsonsDisease"
+author: "Victor Vinícius Gomes"
+format: pdf
+editor: visual
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(minfi)
+library(GEOquery)
+library(IlluminaHumanMethylation450kmanifest)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+```
+
+```{r}
+# getGEOSuppFiles("GSE195834") # Só deve ser rodado uma vez, para baixar os arquivos auxiliares
+```
+
+```{r}
+
+
+
+```
