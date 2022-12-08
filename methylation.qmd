@@ -1,0 +1,244 @@
+---
+title: "Efeito do fumo na metilação do DNA em células CD8T"
+author: "Victor Vinícius Gomes"
+format: pdf
+editor: visual
+---
+
+# Efeito do fumo na metilação do DNA em células CD8T do sangue humano
+
+A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a análise de dados de metilação. Usando a função do pacote `BiocManager` , `install()` , instala-se os pacotes necessários, e listados nos códigos. Alguns têm tamanho mediano, e podem levar algum tempo até serem instalados.
+
+#### Pacotes exigidos
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+# pacotes usados e que não são do Bioconductor
+pacotes = c("fs", 'R.utils')
+
+for(pacote in pacotes){
+  if(!pacote %in% installed.packages())
+    install.packages(pacote)
+  library(pacote, character.only = TRUE)}
+
+
+library(minfi)
+library(GEOquery)
+# library(GEOquery)
+# library(IlluminaHumanMethylation450kmanifest)
+# library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+# BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
+BiocManager::install("IlluminaHumanMethylationEPICmanifest")
+
+
+
+```
+
+Após a instalação dos pacotes, pode-se iniciar a leitura dos dados.
+
+`Como é uma parte que depende de como os dados foram coletados, cada experimento pode fazer essa parte de forma diferente, mas a ideia geral é a mesma, podendo-se generalizar boa parte dos passos aqui descritos, com pequenas alterações para comportar os diferentes experimentos possíveis.`
+
+É possível observar a utilização da função **rm()** ao longo da análise. Vale denotar que o consumo de memória em processamento de dados genéticos é muito grande. Sendo assim, optou-se por remover as variáveis que já haviam sido usadas e não seriam mais acessadas.
+
+#### Início da leitura dos dados
+
+No caso dos dados sobre fumo, os arquivos .IDAT estão disponíveis em dois tipos: experimentos 450k e experimentos EPIC (850k). Como forma de usar ambos
+
+```{r}
+
+# untar("GSE147430_RAW.tar", exdir = "GSE147430") # só deve ser feito uma vez
+
+idatFiles = paste0('GSE147430/',list.files('GSE147430/', pattern = "idat"))
+# nomes dos arquivos idat com a adição do caminho até eles do diretório atual
+
+# 91% dos arquivos são 450k (121)
+# os outros 9% são EPIC arrays (11)
+# total de 132 pacientes (121+11)
+
+files_450k = idatFiles[(file.size(idatFiles) < 5000000)] # file.size mede em bytes
+files_EPIC = idatFiles[!(file.size(idatFiles) < 5000000)]
+
+
+# Os arquivos serão lidos separadamente e, depois, unidos usando a função 
+# combineArrays() do pacote minfi, e o produto final será um 450k set, pois
+# como a maioria dos dados é 450k, teríamos muitos dados faltantes usando os
+# 850k no geral.
+
+# Para a leitura dos arquivos de forma separada, serão criados 2 diretórios:
+# o diretório para 450k e o para EPIC arrays
+
+dir_450k = "450kIdatFiles"
+dir_EPIC = "EPICIdatFiles"
+
+
+cria_dir_adiciona_arquivos = function(nomeDir, arquivos, print_results=FALSE){
+  wd = paste0(getwd(), "/")
+  caminho = paste0(wd, nomeDir)
+  
+  if(!dir.exists(caminho))
+    dir.create(caminho)         # cria o diretório se esse não existe                      
+  
+  arquivos_ = unlist(strsplit(arquivos, split = "/", fixed = T))[seq(2, length(arquivos) * 2, 2)]
+  
+  arquivos = arquivos[which(!arquivos_ %in% list.files(caminho))]
+  if(length(arquivos)!=0) file.copy(from = paste0(wd, arquivos), to = paste0(caminho,"/", arquivos_))
+  
+  if (print_results)
+    print(list.files(caminho))
+}
+
+    
+# Criando diretórios para 450k e EPIC
+# não é necessário rodar mais que uma vez as funções
+
+cria_dir_adiciona_arquivos(nomeDir = dir_450k, arquivos = files_450k)
+cria_dir_adiciona_arquivos(nomeDir = dir_EPIC, arquivos = files_EPIC)
+
+
+# checando se o tamanho permanece o mesmo, mas em pastas separadas
+
+tam_separado = (sum(file.size(paste0(dir_EPIC, "/",list.files(dir_EPIC))))
+                + sum(file.size(paste0(dir_450k, "/",list.files(dir_450k))))) / 1e6
+
+tam_original = sum(file.size(idatFiles)) / 1e6
+
+
+print(tam_separado == tam_original)
+
+# removendo arquivos do diretório original usados para criar
+# os dois diretórios separados
+
+unlink(idatFiles)
+
+# pronto para ler os arquivos 450k e EPIC em datasets separados
+
+files_450k = list.files(dir_450k, recursive = T, full.names = T, pattern = ".gz")
+files_EPIC = list.files(dir_EPIC, recursive = T, full.names = T, pattern = ".gz")
+
+
+# deszipando arquivos IDAT
+for(file in files_450k){
+  if(file.exists(file) & isGzipped(file))
+    gunzip(file, remove=T, skip=T)
+}
+
+for(file in files_EPIC){
+  if(file.exists(file) & isGzipped(file))
+    gunzip(file, remove=T, skip=T)
+}
+
+
+# lendo experimentos 450k e EPIC separadamente
+
+exp_450k = read.metharray.exp(dir_450k)
+exp_EPIC = read.metharray.exp(dir_EPIC, force = T)
+
+sampleNames(exp_450k) = sub('.*?_', '',sampleNames(exp_450k))
+sampleNames(exp_EPIC) = sub('.*?_', '',sampleNames(exp_EPIC))
+
+# geoMats e processamento delas
+
+geoMat = getGEO('GSE147430')
+pd.450k = pData(geoMat$`GSE147430-GPL13534_series_matrix.txt.gz`)
+pd.EPIC = pData(geoMat$`GSE147430-GPL21145_series_matrix.txt.gz`)
+rm(geoMat)
+
+
+pd.All = rbind(pd.450k, pd.EPIC)
+
+# reduzir uso de memória
+rm(pd.450k, pd.EPIC)
+pdCols = c('title', 'geo_accession', 'smoking_status:ch1')
+
+# algumas correções nos dados dos pacientes
+
+pd.All = pd.All[pdCols]
+pd.All$title = sub(']', '',sub('.*\\[','',pd.All$title))
+colnames(pd.All)[3] = 'statusFumante'
+
+row.names(pd.All) = pd.All$title
+
+
+# combinando experimentos 450k e EPIC
+rgSet_combined = combineArrays(exp_450k, exp_EPIC,
+                               outType="IlluminaHumanMethylation450k")
+
+
+# liberando memória
+rm(exp_450k, exp_EPIC)
+
+# checando se as amostras dos dados de fenótipos batem com 
+# os dados do setRG
+
+pd.All = pd.All[sampleNames(rgSet_combined),]
+
+pd.All = as(pd.All, 'DataFrame')
+
+
+# passando os dados de fenótipo para o rgSet
+pData(rgSet_combined) = pd.All
+rm(pd.All)
+```
+
+### Preprocessamento dos Dados
+
+#### Controle de Qualidade
+
+O controle de qualidade é parte essencial de qualquer análise onde muitas amostras são feitas, e é preciso controlar pelos problemas que podem ser causados pelo ambiente, erros humanos, etc. Ele confere toda a parte anterior à análise diferencial e que procura filtrar os dados de forma a remover *CpGs* com baixa qualidade, ou que não foram de fato detectados. Para esta comparação inicial de detecção, compara-se os *CpGs* de cada indivíduo com *probes* controle, que são compostos apenas de sinal de fundo, ou o ruído do ambiente. Se houver uma diferença significativa - de acordo com um p-valor a ser determinado - então dado *CpG* foi detectado. Quando este p-valor é grande, este é um sinal de que aquele *CpG* é composto, em boa parte, por ruído de fundo, configurando um sinal ruim.
+
+```{r}
+detP = detectionP(rgSet_combined)
+
+barplot(colMeans(detP), xlab = 'Amostra',
+        ylab = 'P-valores de detecção',
+        names.arg = '',
+        col=factor(pData(rgSet_combined)$statusFumante),
+        las=2); abline(h=0.05, col='red');legend('topleft',legend=levels(factor(pData(rgSet_combined)$statusFumante)), fill=factor(pData(rgSet_combined)$statusFumante), bg='white')
+
+
+# remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
+# 0.05.Assim, CpGs que tiverem um p-valor maior que 0.05 serão automaticamente
+# removidos
+
+rgSet_combined = rgSet_combined[, colMeans(detP)<0.05] 
+
+
+
+# qcReport(rgSet_combined, sampNames = sampleNames(rgSet_combined), sampGroups = pd.All$statusFumante)
+
+
+MSet = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
+
+# é possível automatizar os plots de controle de qualidade usando a função
+# qcReport() do Minfi, e analisar os resultados, que são retornados em um pdf
+# no diretório atual
+
+
+# criando o methylset, podemos fazer outro plot, que separa - ou agrupa - as
+# amostras que têm baixa qualidade.Assim, é possível remover todas aquelas que
+# não passarem no critério, feito por um limiar relativo ao log 2 da intensidade
+# mediana metilada VS não metilada
+#
+
+
+qc = getQC(MSet)
+
+# usando o cutoff disponível na própria função plotQC, encontramos 
+# as amostras que são consideradas ruins e as removemos de análises posteriores.
+
+plotQC(qc)
+
+meds <- (qc$mMed + qc$uMed)/2
+badSampleCutoff = 10.5
+whichBad <- which((meds < badSampleCutoff))
+# serão removidas pelo método de preprocessamento
+
+rm(MSet, qc)
+
+```
+
+```{r}
+
+```
+
+>>>>>>> 9c2cc5a3be001c4e21a4affeca943890a5f25a0e
