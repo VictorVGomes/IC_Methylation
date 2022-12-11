@@ -28,7 +28,7 @@ library(GEOquery)
 # library(IlluminaHumanMethylation450kmanifest)
 # library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 # BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
-BiocManager::install("IlluminaHumanMethylationEPICmanifest")
+# BiocManager::install("IlluminaHumanMethylationEPICmanifest")
 
 
 
@@ -233,10 +233,40 @@ badSampleCutoff = 10.5
 whichBad <- which((meds < badSampleCutoff))
 # serão removidas pelo método de preprocessamento
 
+
+# plot de densidade das amostras, raw
+
+densityPlot(MSet, sampGroups = pData(MSet)$statusFumante)
+
+# outros plots estão disponíveis, como do densityBeanPlot:
+densityBeanPlot(MSet, sampGroups = pData(MSet)$statusFumante)
+
+
+# plot interessante para observar se há algum paciente com 
+# problemas maiores de detecção dos probes
+
+falharam <- detP > 0.05
+plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam), main='Taxa média de falha por amostra', xlab='Amostra', ylab='taxa de probes com p-valor de detecção > 0.05')
+
+amostra_ruim = which(colMeans(falharam)>0.05)
+
+
+
 rm(MSet, qc)
+
+# multi-dimensional scaling plot é uma forma de redução de dimensionalidade
+# para a visualização dos dados
+# será feito o mds antes e depois do preprocessamento, como forma de 
+# analisar as diferenças e identificar padrões nas amostras
+
+
+mdsPlot(rgSet_combined, sampNames = rgSet_combined$geo_accession, sampGroups=rgSet_combined$statusFumante)
 
 ```
 
 ```{r}
+
+
+
 
 ```
