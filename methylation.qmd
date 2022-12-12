@@ -14,7 +14,7 @@ A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a
 ```{r}
 knitr::opts_chunk$set(echo = TRUE)
 # pacotes usados e que não são do Bioconductor
-pacotes = c("fs", 'R.utils')
+pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer')
 
 for(pacote in pacotes){
   if(!pacote %in% installed.packages())
@@ -198,7 +198,9 @@ barplot(colMeans(detP), xlab = 'Amostra',
 
 # remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
 # 0.05.Assim, CpGs que tiverem um p-valor maior que 0.05 serão automaticamente
-# removidos
+# removidos. Não houve amostra ruim detectada neste passo, sendo assim,
+# a linha abaixo será mantida, apenas para demonstrar como seria feita a remoção
+# caso contrário.
 
 rgSet_combined = rgSet_combined[, colMeans(detP)<0.05] 
 
@@ -207,7 +209,7 @@ rgSet_combined = rgSet_combined[, colMeans(detP)<0.05]
 # qcReport(rgSet_combined, sampNames = sampleNames(rgSet_combined), sampGroups = pd.All$statusFumante)
 
 
-MSet = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
+MSet_raw = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
 
 # é possível automatizar os plots de controle de qualidade usando a função
 # qcReport() do Minfi, e analisar os resultados, que são retornados em um pdf
@@ -221,7 +223,7 @@ MSet = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
 #
 
 
-qc = getQC(MSet)
+qc = getQC(MSet_raw)
 
 # usando o cutoff disponível na própria função plotQC, encontramos 
 # as amostras que são consideradas ruins e as removemos de análises posteriores.
@@ -236,10 +238,10 @@ whichBad <- which((meds < badSampleCutoff))
 
 # plot de densidade das amostras, raw
 
-densityPlot(MSet, sampGroups = pData(MSet)$statusFumante)
+densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
 
 # outros plots estão disponíveis, como do densityBeanPlot:
-densityBeanPlot(MSet, sampGroups = pData(MSet)$statusFumante)
+densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
 
 
 # plot interessante para observar se há algum paciente com 
@@ -248,25 +250,73 @@ densityBeanPlot(MSet, sampGroups = pData(MSet)$statusFumante)
 falharam <- detP > 0.05
 plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam), main='Taxa média de falha por amostra', xlab='Amostra', ylab='taxa de probes com p-valor de detecção > 0.05')
 
-amostra_ruim = which(colMeans(falharam)>0.05)
 
 
+# índices a serem removidos antes da normalização  
+amostrasManter = colMeans(falharam)<0.05
+probesManter = rowMeans(falharam)<0.05
+# devo remover?
 
-rm(MSet, qc)
+
+rm(MSet_raw, qc, detP)
+
+
 
 # multi-dimensional scaling plot é uma forma de redução de dimensionalidade
 # para a visualização dos dados
 # será feito o mds antes e depois do preprocessamento, como forma de 
 # analisar as diferenças e identificar padrões nas amostras
+# o plot mds pode ser feito tanto no rg_set como nos dados processados
+# como o preprocessamento é raw, não há necessidade de fazer o plot nos dados
+# gerados por esse preprocessamento.
 
+
+# analisar outras componentes pode revelar fontes de variação nos dados,
+# no entanto, é melhor fazê-lo nos dados normalizados
 
 mdsPlot(rgSet_combined, sampNames = rgSet_combined$geo_accession, sampGroups=rgSet_combined$statusFumante)
 
 ```
 
+### Normalização
+
+Serão testadas algumas formas diferentes de normalização. As duas candidatas serão a normalização quantílica e Noob. Será feita a demonstração da normalização com e sem as amostras ruins determinadas na parte de controle de qualidade, a fim de mostrar qual a diferença de ter-se apenas boas amostras nos dados analisados. Os plots feitos acima serão refeitos, levando em consideração a correção dos dados, para efeitos de comparação.
+
 ```{r}
+# paleta de cores
+pal <- brewer.pal(3,"Dark2")
+
+MSet1 = preprocessQuantile(object = rgSet_combined,
+                          fixOutliers = TRUE)
+
+MSet = preprocessQuantile(object = rgSet_combined,
+                          fixOutliers = TRUE, 
+                          removeBadSamples = TRUE,
+                          badSampleCutoff = 10.5)
+
+MSet_noob = preprocessNoob(rgSet_combined)
 
 
+dim(MSet); dim(MSet1)
+par(mfrow=c(1,2));mdsPlot(getM(MSet1), sampNames = MSet1$geo_accession, sampGroups = MSet1$statusFumante);mdsPlot(getM(MSet), sampNames = MSet$geo_accession, sampGroups = MSet$statusFumante);mds
+
+
+
+plotMDS(getM(MSet), sampNames = MSet$geo_accession,
+        sampGroups = MSet$statusFumante, dim=c(1, 3))
+
+
+plotMDS(getM(MSet), top=1000, gene.selection="common", 
+        col=pal[factor(MSet$statusFumante)], dim=c(1,2));legend("topright", legend=levels(factor(MSet$statusFumante)), text.col=pal,
+       cex=0.7, bg="white")
+
+
+
+par(mfrow=c(1,3));densityPlot(rgSet_combined, sampGroups = rgSet_combined$statusFumante, main='Sem Normalização');densityPlot(getBeta(MSet), sampGroups = MSet$statusFumante, main='Normalização Quantílica');densityPlot(getBeta(MSet_noob), sampGroups = MSet_noob$statusFumante, main='Normalização Noob')
+
+# nota-se que o preprocessamento Noob não foi bem ajustado aos dados, e portanto
+# não será utilizado a partir deste ponto, sem a utilização dos demais plots
+rm(MSet_noob)
 
 
 ```
