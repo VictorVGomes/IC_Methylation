@@ -14,7 +14,7 @@ A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a
 ```{r}
 knitr::opts_chunk$set(echo = TRUE)
 # pacotes usados e que não são do Bioconductor
-pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer')
+pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer', 'devtools')
 
 for(pacote in pacotes){
   if(!pacote %in% installed.packages())
@@ -29,9 +29,8 @@ library(GEOquery)
 # library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 # BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
 # BiocManager::install("IlluminaHumanMethylationEPICmanifest")
-
-
-
+# BiocManager::install('minfiData')
+# devtools::install_github("markgene/maxprobes")
 ```
 
 Após a instalação dos pacotes, pode-se iniciar a leitura dos dados.
@@ -89,7 +88,7 @@ cria_dir_adiciona_arquivos = function(nomeDir, arquivos, print_results=FALSE){
 
     
 # Criando diretórios para 450k e EPIC
-# não é necessário rodar mais que uma vez as funções
+# não é necessário rodar  as funções mais que uma vez
 
 cria_dir_adiciona_arquivos(nomeDir = dir_450k, arquivos = files_450k)
 cria_dir_adiciona_arquivos(nomeDir = dir_EPIC, arquivos = files_EPIC)
@@ -153,7 +152,7 @@ pdCols = c('title', 'geo_accession', 'smoking_status:ch1')
 # algumas correções nos dados dos pacientes
 
 pd.All = pd.All[pdCols]
-pd.All$title = sub(']', '',sub('.*\\[','',pd.All$title))
+pd.All$title = sub(']', '', sub('.*\\[','',pd.All$title))
 colnames(pd.All)[3] = 'statusFumante'
 
 row.names(pd.All) = pd.All$title
@@ -180,11 +179,13 @@ pData(rgSet_combined) = pd.All
 rm(pd.All)
 ```
 
+
 ### Preprocessamento dos Dados
 
 #### Controle de Qualidade
 
 O controle de qualidade é parte essencial de qualquer análise onde muitas amostras são feitas, e é preciso controlar pelos problemas que podem ser causados pelo ambiente, erros humanos, etc. Ele confere toda a parte anterior à análise diferencial e que procura filtrar os dados de forma a remover *CpGs* com baixa qualidade, ou que não foram de fato detectados. Para esta comparação inicial de detecção, compara-se os *CpGs* de cada indivíduo com *probes* controle, que são compostos apenas de sinal de fundo, ou o ruído do ambiente. Se houver uma diferença significativa - de acordo com um p-valor a ser determinado - então dado *CpG* foi detectado. Quando este p-valor é grande, este é um sinal de que aquele *CpG* é composto, em boa parte, por ruído de fundo, configurando um sinal ruim.
+
 
 ```{r}
 detP = detectionP(rgSet_combined)
@@ -195,10 +196,13 @@ barplot(colMeans(detP), xlab = 'Amostra',
         col=factor(pData(rgSet_combined)$statusFumante),
         las=2); abline(h=0.05, col='red');legend('topleft',legend=levels(factor(pData(rgSet_combined)$statusFumante)), fill=factor(pData(rgSet_combined)$statusFumante), bg='white')
 
+```
 
+
+```{r}
 # remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
-# 0.05.Assim, CpGs que tiverem um p-valor maior que 0.05 serão automaticamente
-# removidos. Não houve amostra ruim detectada neste passo, sendo assim,
+# 0.05. Assim, amostras que tiverem um p-valor maior que 0.05 serão automaticamente
+# removidas. Não houve amostra ruim detectada neste passo, sendo assim,
 # a linha abaixo será mantida, apenas para demonstrar como seria feita a remoção
 # caso contrário.
 
@@ -216,22 +220,22 @@ MSet_raw = preprocessRaw(rgSet_combined) # usado para controle de qualidade, tam
 # no diretório atual
 
 
-# criando o methylset, podemos fazer outro plot, que separa - ou agrupa - as
-# amostras que têm baixa qualidade.Assim, é possível remover todas aquelas que
+# criando o methylSet, podemos fazer outro plot, que separa - ou agrupa - as
+# amostras que têm baixa qualidade. Assim, é possível remover todas aquelas que
 # não passarem no critério, feito por um limiar relativo ao log 2 da intensidade
 # mediana metilada VS não metilada
-#
-
 
 qc = getQC(MSet_raw)
 
 # usando o cutoff disponível na própria função plotQC, encontramos 
 # as amostras que são consideradas ruins e as removemos de análises posteriores.
-
 plotQC(qc)
+```
 
+
+```{r}
 meds <- (qc$mMed + qc$uMed)/2
-badSampleCutoff = 10.5
+badSampleCutoff = 10.5 # do próprio minfi
 whichBad <- which((meds < badSampleCutoff))
 # serão removidas pelo método de preprocessamento
 
@@ -239,28 +243,36 @@ whichBad <- which((meds < badSampleCutoff))
 # plot de densidade das amostras, raw
 
 densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
+```
 
+
+```{r}
 # outros plots estão disponíveis, como do densityBeanPlot:
 densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
+```
 
 
+
+```{r}
 # plot interessante para observar se há algum paciente com 
 # problemas maiores de detecção dos probes
 
 falharam <- detP > 0.05
-plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam), main='Taxa média de falha por amostra', xlab='Amostra', ylab='taxa de probes com p-valor de detecção > 0.05')
+plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam),
+     main='Taxa média de falha por amostra', xlab='Amostra',
+     ylab='taxa de probes com p-valor de detecção > 0.05')
+```
 
 
 
+```{r}
 # índices a serem removidos antes da normalização  
 amostrasManter = colMeans(falharam)<0.05
 probesManter = rowMeans(falharam)<0.05
-# devo remover?
+dim(rgSet_combined)
+rgSet_combined = rgSet_combined[probesManter, amostrasManter]
 
-
-rm(MSet_raw, qc, detP)
-
-
+boxplot(detP)
 
 # multi-dimensional scaling plot é uma forma de redução de dimensionalidade
 # para a visualização dos dados
@@ -269,18 +281,48 @@ rm(MSet_raw, qc, detP)
 # o plot mds pode ser feito tanto no rg_set como nos dados processados
 # como o preprocessamento é raw, não há necessidade de fazer o plot nos dados
 # gerados por esse preprocessamento.
+```
 
 
+
+```{r}
 # analisar outras componentes pode revelar fontes de variação nos dados,
 # no entanto, é melhor fazê-lo nos dados normalizados
-
 mdsPlot(rgSet_combined, sampNames = rgSet_combined$geo_accession, sampGroups=rgSet_combined$statusFumante)
 
 ```
 
+
+```{r}
+# Tentando pca
+
+pca_rgset = princomp(as.matrix(rgSet_combined))
+
+```
+
+
 ### Normalização
 
 Serão testadas algumas formas diferentes de normalização. As duas candidatas serão a normalização quantílica e Noob. Será feita a demonstração da normalização com e sem as amostras ruins determinadas na parte de controle de qualidade, a fim de mostrar qual a diferença de ter-se apenas boas amostras nos dados analisados. Os plots feitos acima serão refeitos, levando em consideração a correção dos dados, para efeitos de comparação.
+
+<!-- **DROP DE PROBES QUE NÃO FOI FEITO POR CONTROLE DE QUALIDADE PODE SER FEITO DEPOIS DA NORMALIZAÇÃO -->
+<!-- DADO QUE NÃO HÁ PROBLEMA DE VALOR NO PROBE, E SIM EFEITO ESPECÍFICO DELE QUE QUER-SE EVITAR* -->
+<!-- PARA DROPAR PROBES CROSS-REATIVOS::: -->
+<!-- MsetEx_noXloci <- maxprobes::dropXreactiveLoci(MsetEx) -->
+<!-- MsetEx_noXloci -->
+<!-- Depending on the nature of your samples and your biological question you may also choose to filter out the probes from the X and Y chromosomes or probes that are known to have common SNPs at the CpG site. As the samples in this dataset were all derived from male donors, we will not be removing the sex chromosome probes as part of this analysis, however example code is provided below. A different dataset, which contains both male and female samples, is used to demonstrate a Differential Variability analysis and provides an example of when sex chromosome removal is necessary (Figure 13). -->
+
+<!-- # if your data includes males and females, remove probes on the sex chromosomes -->
+<!-- keep <- !(featureNames(mSetSqFlt) %in% ann450k$Name[ann450k$chr %in%  -->
+<!--                                                         c("chrX","chrY")]) -->
+<!-- table(keep) -->
+<!-- mSetSqFlt <- mSetSqFlt[keep,] -->
+<!-- There is a function in minfi that provides a simple interface for the removal of probes where common SNPs may affect the CpG. You can either remove all probes affected by SNPs (default), or only those with minor allele frequencies greater than a specified value. -->
+
+<!-- # remove probes with SNPs at CpG site -->
+<!-- mSetSqFlt <- dropLociWithSnps(mSetSqFlt) -->
+<!-- mSetSqFlt -->
+
 
 ```{r}
 # paleta de cores
