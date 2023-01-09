@@ -14,7 +14,8 @@ A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a
 ```{r}
 knitr::opts_chunk$set(echo = TRUE)
 # pacotes usados e que não são do Bioconductor
-pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer', 'devtools')
+pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer', 
+            'devtools', 'factoextra', 'limma')
 
 for(pacote in pacotes){
   if(!pacote %in% installed.packages())
@@ -24,7 +25,6 @@ for(pacote in pacotes){
 
 library(minfi)
 library(GEOquery)
-# library(GEOquery)
 # library(IlluminaHumanMethylation450kmanifest)
 # library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 # BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
@@ -41,7 +41,26 @@ Após a instalação dos pacotes, pode-se iniciar a leitura dos dados.
 
 #### Início da leitura dos dados
 
-No caso dos dados sobre fumo, os arquivos .IDAT estão disponíveis em dois tipos: experimentos 450k e experimentos EPIC (850k). Como forma de usar ambos
+No caso dos dados sobre fumo, os arquivos .IDAT estão disponíveis em dois tipos: experimentos 450k e experimentos EPIC (850k). Como forma de usar ambos, foi decidido que os dados seriam lidos em experimentos separados e, depois, unificados em um único experimento 450k. Assim, a análise será baseada em um experimento 450k, mas é facilmente generalizável para um experimento EPIC.
+
+No `minfi`, pacote usado para processar os dados, podemos listar os tipos de dados que formam uma análise:
+
+1. `rgSet`: formato que armazena as intensidades `red` e `green` da análise. Dependendo de como os dados foram lidos, também contém os dados dos fenótipos. É importante notar que as intensidades armazenadas aqui são apenas das cores `red` e `green`, sendo diferentes das intensidades relativas à metilação e não metilação, adquiridas posteriormente;
+
+2. `MSet`: `methylSet`, é o formato que armazena as intensidades de metilação (e de não metilação) de cada `probe`, para cada amostra. A forma mais simples de obter essa estrutura é usando a função `preprocessRaw()` no `rgSet` (importante notar que não é feita nenhuma normalização nos dados quando a função usada para chegar ao `Mset` é essa);
+
+3. Ao ponto em que tem-se o `MSet`, é possível criar duas novas estruturas: o `GMSet` e o `RSet` 
+
+3.1 O `GMSet`, ou `Genomic Methyl Set`, é quando o `MSet` é mapeado ao genoma usando a função `mapToGenome()`. Isso significa que cada probe do `MSet` terá sua coordenada genômica, além de algumas informações adicionais [ref https://bioconductor.org/help/course-materials/2014/BioC2014/minfi_BioC2014.pdf pag. 8].
+
+3.2 Já o `RSet`, ou `Ratio Set`, refere-se ao `MSet` convertido em uma classe feita para armazenar os valores de Beta e/ou valores M, sendo assim, parte-se das intensidades metiladas e não metiladas e consegue-se os valores de beta e/ou M. É possível obter um `copy number`, a matriz com a soma das intensidades metiladas e não metiladas, para referência futura, dado que esse mapeamento é não-reversível.
+
+4. O `GRSet` - `Genomic Ratio Set` - é a próxima classe a ser gerada: é originada da fusão de 3.1 e 3.2, sendo apenas o `Ratio Set` mapeado ao genoma.
+
+
+
+
+
 
 ```{r}
 
@@ -96,8 +115,8 @@ cria_dir_adiciona_arquivos(nomeDir = dir_EPIC, arquivos = files_EPIC)
 
 # checando se o tamanho permanece o mesmo, mas em pastas separadas
 
-tam_separado = (sum(file.size(paste0(dir_EPIC, "/",list.files(dir_EPIC))))
-                + sum(file.size(paste0(dir_450k, "/",list.files(dir_450k))))) / 1e6
+tam_separado = (sum(file.size(paste0(dir_EPIC, "/", list.files(dir_EPIC))))
+                + sum(file.size(paste0(dir_450k, "/", list.files(dir_450k))))) / 1e6
 
 tam_original = sum(file.size(idatFiles)) / 1e6
 
@@ -105,7 +124,9 @@ tam_original = sum(file.size(idatFiles)) / 1e6
 print(tam_separado == tam_original)
 
 # removendo arquivos do diretório original usados para criar
-# os dois diretórios separados
+# os dois diretórios separados.
+# unlink vai realmente deletar os arquivos passados a ele,
+# portanto, cuidado ao usá-lo.
 
 unlink(idatFiles)
 
@@ -125,7 +146,6 @@ for(file in files_EPIC){
   if(file.exists(file) & isGzipped(file))
     gunzip(file, remove=T, skip=T)
 }
-
 
 # lendo experimentos 450k e EPIC separadamente
 
@@ -159,11 +179,13 @@ row.names(pd.All) = pd.All$title
 
 
 # combinando experimentos 450k e EPIC
+
 rgSet_combined = combineArrays(exp_450k, exp_EPIC,
                                outType="IlluminaHumanMethylation450k")
 
 
 # liberando memória
+
 rm(exp_450k, exp_EPIC)
 
 # checando se as amostras dos dados de fenótipos batem com 
@@ -175,6 +197,7 @@ pd.All = as(pd.All, 'DataFrame')
 
 
 # passando os dados de fenótipo para o rgSet
+
 pData(rgSet_combined) = pd.All
 rm(pd.All)
 ```
@@ -184,41 +207,24 @@ rm(pd.All)
 
 #### Controle de Qualidade
 
-O controle de qualidade é parte essencial de qualquer análise onde muitas amostras são feitas, e é preciso controlar pelos problemas que podem ser causados pelo ambiente, erros humanos, etc. Ele confere toda a parte anterior à análise diferencial e que procura filtrar os dados de forma a remover *CpGs* com baixa qualidade, ou que não foram de fato detectados. Para esta comparação inicial de detecção, compara-se os *CpGs* de cada indivíduo com *probes* controle, que são compostos apenas de sinal de fundo, ou o ruído do ambiente. Se houver uma diferença significativa - de acordo com um p-valor a ser determinado - então dado *CpG* foi detectado. Quando este p-valor é grande, este é um sinal de que aquele *CpG* é composto, em boa parte, por ruído de fundo, configurando um sinal ruim.
+O controle de qualidade é parte essencial de qualquer análise onde muitas amostras são feitas, e é preciso controlar pelos problemas que podem ser causados pelo ambiente, erros humanos, etc. Ele confere toda a parte anterior à análise diferencial e que procura filtrar os dados de forma a remover *CpGs* com baixa qualidade, ou que não foram de fato detectados. Para esta comparação inicial de detecção, compara-se os *CpGs* de cada indivíduo com *probes* controle, que são compostos apenas de sinal de fundo, ou o ruído do ambiente. Se houver uma diferença significativa - de acordo com um p-valor a ser determinado - então dado *CpG* foi detectado. Quando este p-valor é grande, é um sinal de que aquele *CpG* é composto, em boa parte, por ruído de fundo, configurando um sinal ruim.
 
 
 ```{r}
 detP = detectionP(rgSet_combined)
+falharam <- detP > 0.01
 
 barplot(colMeans(detP), xlab = 'Amostra',
         ylab = 'P-valores de detecção',
         names.arg = '',
         col=factor(pData(rgSet_combined)$statusFumante),
         las=2); abline(h=0.05, col='red');legend('topleft',legend=levels(factor(pData(rgSet_combined)$statusFumante)), fill=factor(pData(rgSet_combined)$statusFumante), bg='white')
-
 ```
 
 
+
 ```{r}
-# remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
-# 0.05. Assim, amostras que tiverem um p-valor maior que 0.05 serão automaticamente
-# removidas. Não houve amostra ruim detectada neste passo, sendo assim,
-# a linha abaixo será mantida, apenas para demonstrar como seria feita a remoção
-# caso contrário.
-
-rgSet_combined = rgSet_combined[, colMeans(detP)<0.05] 
-
-
-
-# qcReport(rgSet_combined, sampNames = sampleNames(rgSet_combined), sampGroups = pd.All$statusFumante)
-
-
 MSet_raw = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
-
-# é possível automatizar os plots de controle de qualidade usando a função
-# qcReport() do Minfi, e analisar os resultados, que são retornados em um pdf
-# no diretório atual
-
 
 # criando o methylSet, podemos fazer outro plot, que separa - ou agrupa - as
 # amostras que têm baixa qualidade. Assim, é possível remover todas aquelas que
@@ -227,23 +233,53 @@ MSet_raw = preprocessRaw(rgSet_combined) # usado para controle de qualidade, tam
 
 qc = getQC(MSet_raw)
 
-# usando o cutoff disponível na própria função plotQC, encontramos 
-# as amostras que são consideradas ruins e as removemos de análises posteriores.
+
+
+# é possível automatizar os plots de controle de qualidade usando a função
+# qcReport() do Minfi, e analisar os resultados, que são retornados em um pdf
+# no diretório atual
+
+# qcReport(rgSet_combined, sampNames = sampleNames(rgSet_combined), sampGroups = pd.All$statusFumante)
+
 plotQC(qc)
 ```
 
 
+
+
+
 ```{r}
+# remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
+# 0.05. Assim, amostras que tiverem um p-valor maior que 0.05 serão automaticamente
+# removidas. Foram detectadas 2 amostras ruins, mostradas a seguir. Essas serão
+# removidas pelo nome, para evitar remover pelo índice da coluna, que pode mudar
+
+amostra_ruim_det = colMeans(falharam) > 0.01
+quais_amostras_detp = names(which(amostra_ruim_det==TRUE))
+```
+
+
+
+
+
+```{r}
+# usando o cutoff disponível na própria função plotQC, encontramos 
+# as amostras que são consideradas ruins e as removemos de análises posteriores.
 meds <- (qc$mMed + qc$uMed)/2
 badSampleCutoff = 10.5 # do próprio minfi
 whichBad <- which((meds < badSampleCutoff))
-# serão removidas pelo método de preprocessamento
+whichBadNames = sampleNames(rgSet_combined[, whichBad])
+
+amostrasARemover = union.Vector(quais_amostras_detp, whichBadNames)
+# serão removidas pelo método de preprocessamento, ou antes de preprocessar
 
 
 # plot de densidade das amostras, raw
 
 densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
 ```
+
+
 
 
 ```{r}
@@ -257,22 +293,17 @@ densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
 # plot interessante para observar se há algum paciente com 
 # problemas maiores de detecção dos probes
 
-falharam <- detP > 0.05
 plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam),
      main='Taxa média de falha por amostra', xlab='Amostra',
-     ylab='taxa de probes com p-valor de detecção > 0.05')
+     ylab='taxa de probes com p-valor de detecção > 0.01')
 ```
 
 
 
 ```{r}
 # índices a serem removidos antes da normalização  
-amostrasManter = colMeans(falharam)<0.05
-probesManter = rowMeans(falharam)<0.05
-dim(rgSet_combined)
-rgSet_combined = rgSet_combined[probesManter, amostrasManter]
-
-boxplot(detP)
+probesRemover = rowMeans(falharam) > 0.05
+probesRemover = which(probesRemover==TRUE)
 
 # multi-dimensional scaling plot é uma forma de redução de dimensionalidade
 # para a visualização dos dados
@@ -281,23 +312,36 @@ boxplot(detP)
 # o plot mds pode ser feito tanto no rg_set como nos dados processados
 # como o preprocessamento é raw, não há necessidade de fazer o plot nos dados
 # gerados por esse preprocessamento.
-```
 
-
-
-```{r}
 # analisar outras componentes pode revelar fontes de variação nos dados,
 # no entanto, é melhor fazê-lo nos dados normalizados
-mdsPlot(rgSet_combined, sampNames = rgSet_combined$geo_accession, sampGroups=rgSet_combined$statusFumante)
 
+mdsPlot(getM(MSet_raw),
+        sampNames = rgSet_combined$geo_accession,
+        sampGroups=rgSet_combined$statusFumante, )
+```
+
+
+
+```{r}
+# O PCA parece ter funcionado bem com as componentes 1 e 4, podendo-se ver algum
+# tipo de padrão. No entanto, é apenas um resultado preliminar, já que esses
+# dados são enteriores à normalização aplicada, nos dados raw.
+set.seed(42)
+rgset_samp = t(getMeth(sample(MSet_raw, 4000)))
+
+fviz_pca_ind(prcomp(rgset_samp, center = T, scale.=T), habillage = MSet_raw$statusFumante,
+             axes = c(1, 3), addEllipses = T, ellipse.level=0.95)
 ```
 
 
 ```{r}
-# Tentando pca
+# removendo amostras e probes problemáticos
+rgSet_combinedFiltrado = rgSet_combined[-probesRemover,
+                  which(!amostrasARemover %in% sampleNames(rgSet_combined))]
 
-pca_rgset = princomp(as.matrix(rgSet_combined))
 
+rm(rgSet_combinedFiltrado)
 ```
 
 
@@ -322,21 +366,26 @@ Serão testadas algumas formas diferentes de normalização. As duas candidatas 
 <!-- # remove probes with SNPs at CpG site -->
 <!-- mSetSqFlt <- dropLociWithSnps(mSetSqFlt) -->
 <!-- mSetSqFlt -->
+<!-- gset <- dropLociWithSnps(gset, snps=c("SBE","CpG"), maf=0) -->
 
 
 ```{r}
+rm(detP, falharam, MSet_raw, rgset_samp, qc)
+
 # paleta de cores
 pal <- brewer.pal(3,"Dark2")
 
-MSet1 = preprocessQuantile(object = rgSet_combined,
-                          fixOutliers = TRUE)
-
-MSet = preprocessQuantile(object = rgSet_combined,
+# A normalização será a quantílica
+MSetQuantile = preprocessQuantile(object = rgSet_combined,
                           fixOutliers = TRUE, 
                           removeBadSamples = TRUE,
                           badSampleCutoff = 10.5)
 
-MSet_noob = preprocessNoob(rgSet_combined)
+
+# Tentando o preprocessamento Noob, pois foi usada no paper que forneceu os dados
+# deve-se remover as amostras ruins na mão
+
+MSetNoob = preprocessNoob(rgSet_combined)
 
 
 dim(MSet); dim(MSet1)
