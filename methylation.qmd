@@ -61,8 +61,46 @@ No `minfi`, pacote usado para processar os dados, podemos listar os tipos de dad
 
 
 
-
 ```{r}
+
+# algumas funções auxiliares
+
+para_png = function(plotAsString, plotName, plotRes=TRUE, ...){
+  dirr = paste0(getwd(), '/images/', plotName, '.png')
+  png(dirr, res = 180, width = 20, height = 10, ...)
+  #
+  eval(parse(text=plotAsString))
+  #
+  invisible(dev.off())
+  cat(paste('Salvo em:', dirr))
+  if(plotRes) eval(parse(text=plotAsString))
+}
+
+# 
+cria_dir_adiciona_arquivos = function(nomeDir, arquivos, print_results=FALSE){
+  wd = paste0(getwd(), "/")
+  caminho = paste0(wd, nomeDir)
+  
+  if(!dir.exists(caminho))
+    dir.create(caminho)         # cria o diretório se esse não existe                      
+  
+  arquivos_ = unlist(strsplit(arquivos, split = "/", fixed = T))[seq(2, length(arquivos) * 2, 2)]
+  
+  arquivos = arquivos[which(!arquivos_ %in% list.files(caminho))]
+  if(length(arquivos)!=0) file.copy(from = paste0(wd, arquivos), to = paste0(caminho,"/", arquivos_))
+  
+  if (print_results)
+    print(list.files(caminho))
+}
+
+# File unzipper
+unzip_files = function(files){
+  for(file in files){
+    if(file.exists(file) & isGzipped(file))
+      gunzip(file, remove=T, skip=T)
+  }
+}
+
 
 # untar("GSE147430_RAW.tar", exdir = "GSE147430") # só deve ser feito uma vez
 
@@ -87,24 +125,6 @@ files_EPIC = idatFiles[!(file.size(idatFiles) < 5000000)]
 
 dir_450k = "450kIdatFiles"
 dir_EPIC = "EPICIdatFiles"
-
-
-cria_dir_adiciona_arquivos = function(nomeDir, arquivos, print_results=FALSE){
-  wd = paste0(getwd(), "/")
-  caminho = paste0(wd, nomeDir)
-  
-  if(!dir.exists(caminho))
-    dir.create(caminho)         # cria o diretório se esse não existe                      
-  
-  arquivos_ = unlist(strsplit(arquivos, split = "/", fixed = T))[seq(2, length(arquivos) * 2, 2)]
-  
-  arquivos = arquivos[which(!arquivos_ %in% list.files(caminho))]
-  if(length(arquivos)!=0) file.copy(from = paste0(wd, arquivos), to = paste0(caminho,"/", arquivos_))
-  
-  if (print_results)
-    print(list.files(caminho))
-}
-
     
 # Criando diretórios para 450k e EPIC
 # não é necessário rodar  as funções mais que uma vez
@@ -135,18 +155,15 @@ unlink(idatFiles)
 files_450k = list.files(dir_450k, recursive = T, full.names = T, pattern = ".gz")
 files_EPIC = list.files(dir_EPIC, recursive = T, full.names = T, pattern = ".gz")
 
-
 # deszipando arquivos IDAT
-for(file in files_450k){
-  if(file.exists(file) & isGzipped(file))
-    gunzip(file, remove=T, skip=T)
-}
+unzip_files(files_450k)
+unzip_files(files_EPIC)
+```
 
-for(file in files_EPIC){
-  if(file.exists(file) & isGzipped(file))
-    gunzip(file, remove=T, skip=T)
-}
 
+
+
+```{r}
 # lendo experimentos 450k e EPIC separadamente
 
 exp_450k = read.metharray.exp(dir_450k)
@@ -214,11 +231,7 @@ O controle de qualidade é parte essencial de qualquer análise onde muitas amos
 detP = detectionP(rgSet_combined)
 falharam <- detP > 0.01
 
-barplot(colMeans(detP), xlab = 'Amostra',
-        ylab = 'P-valores de detecção',
-        names.arg = '',
-        col=factor(pData(rgSet_combined)$statusFumante),
-        las=2); abline(h=0.05, col='red');legend('topleft',legend=levels(factor(pData(rgSet_combined)$statusFumante)), fill=factor(pData(rgSet_combined)$statusFumante), bg='white')
+para_png("barplot(colMeans(detP), xlab = 'Amostra', ylab = 'P-valores de detecção', names.arg = '', col=factor(pData(rgSet_combined)$statusFumante), las=2, cex.lab=1.5, cex.sub=1.5); abline(h=0.05, col='red');legend('topleft',legend=levels(factor(pData(rgSet_combined)$statusFumante)), fill=factor(pData(rgSet_combined)$statusFumante), bg='white')", 'Det-P-por-amostra', units = 'in')
 ```
 
 
@@ -241,7 +254,7 @@ qc = getQC(MSet_raw)
 
 # qcReport(rgSet_combined, sampNames = sampleNames(rgSet_combined), sampGroups = pd.All$statusFumante)
 
-plotQC(qc)
+para_png("plotQC(qc)", 'qc', units = 'cm')
 ```
 
 
@@ -255,7 +268,7 @@ plotQC(qc)
 # removidas pelo nome, para evitar remover pelo índice da coluna, que pode mudar
 
 amostra_ruim_det = colMeans(falharam) > 0.01
-quais_amostras_detp = names(which(amostra_ruim_det==TRUE))
+quais_amostras_detp = which(amostra_ruim_det==TRUE)
 ```
 
 
@@ -268,15 +281,14 @@ quais_amostras_detp = names(which(amostra_ruim_det==TRUE))
 meds <- (qc$mMed + qc$uMed)/2
 badSampleCutoff = 10.5 # do próprio minfi
 whichBad <- which((meds < badSampleCutoff))
-whichBadNames = sampleNames(rgSet_combined[, whichBad])
 
-amostrasARemover = union.Vector(quais_amostras_detp, whichBadNames)
+amostrasARemover = union.Vector(quais_amostras_detp, whichBad)
 # serão removidas pelo método de preprocessamento, ou antes de preprocessar
 
 
 # plot de densidade das amostras, raw
 
-densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
+para_png("densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante, main='Sem Normalização')",'density-plot-raw', units = 'cm')
 ```
 
 
@@ -284,7 +296,7 @@ densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
 
 ```{r}
 # outros plots estão disponíveis, como do densityBeanPlot:
-densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
+para_png("densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)", 'density-bean-plot-raw', units = 'in')
 ```
 
 
@@ -293,14 +305,14 @@ densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)
 # plot interessante para observar se há algum paciente com 
 # problemas maiores de detecção dos probes
 
-plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam),
+para_png("plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam),
      main='Taxa média de falha por amostra', xlab='Amostra',
-     ylab='taxa de probes com p-valor de detecção > 0.01')
+     ylab='taxa de probes com p-valor de detecção > 0.01', cex.sub=1.7, cex.lab=1.7, cex.main=2)", 'pvalor-falha-amostra', units = 'in')
 ```
 
 
 
-```{r}
+```{r, fig.width=20,}
 # índices a serem removidos antes da normalização  
 probesRemover = rowMeans(falharam) > 0.05
 probesRemover = which(probesRemover==TRUE)
@@ -316,9 +328,9 @@ probesRemover = which(probesRemover==TRUE)
 # analisar outras componentes pode revelar fontes de variação nos dados,
 # no entanto, é melhor fazê-lo nos dados normalizados
 
-mdsPlot(getM(MSet_raw),
+para_png("mdsPlot(getM(MSet_raw),
         sampNames = rgSet_combined$geo_accession,
-        sampGroups=rgSet_combined$statusFumante, )
+        sampGroups=rgSet_combined$statusFumante, )", 'mdsplot-raw', units = 'in')
 ```
 
 
@@ -330,18 +342,14 @@ mdsPlot(getM(MSet_raw),
 set.seed(42)
 rgset_samp = t(getMeth(sample(MSet_raw, 4000)))
 
-fviz_pca_ind(prcomp(rgset_samp, center = T, scale.=T), habillage = MSet_raw$statusFumante,
-             axes = c(1, 3), addEllipses = T, ellipse.level=0.95)
+para_png("print(fviz_pca_ind(prcomp(rgset_samp, center = T, scale.=T), habillage = MSet_raw$statusFumante,
+             axes = c(1, 3), addEllipses = T, ellipse.level=0.95))", 'pca-raw', units = 'in')
 ```
 
 
 ```{r}
 # removendo amostras e probes problemáticos
-rgSet_combinedFiltrado = rgSet_combined[-probesRemover,
-                  which(!amostrasARemover %in% sampleNames(rgSet_combined))]
-
-
-rm(rgSet_combinedFiltrado)
+rgSet_combinedFiltrado = rgSet_combined[-probesRemover, -amostrasARemover]
 ```
 
 
@@ -376,7 +384,7 @@ rm(detP, falharam, MSet_raw, rgset_samp, qc)
 pal <- brewer.pal(3,"Dark2")
 
 # A normalização será a quantílica
-MSetQuantile = preprocessQuantile(object = rgSet_combined,
+MSetQuantile = preprocessQuantile(object = rgSet_combinedFiltrado,
                           fixOutliers = TRUE, 
                           removeBadSamples = TRUE,
                           badSampleCutoff = 10.5)
@@ -386,28 +394,35 @@ MSetQuantile = preprocessQuantile(object = rgSet_combined,
 # deve-se remover as amostras ruins na mão
 
 MSetNoob = preprocessNoob(rgSet_combined)
-
-
-dim(MSet); dim(MSet1)
-par(mfrow=c(1,2));mdsPlot(getM(MSet1), sampNames = MSet1$geo_accession, sampGroups = MSet1$statusFumante);mdsPlot(getM(MSet), sampNames = MSet$geo_accession, sampGroups = MSet$statusFumante);mds
+```
 
 
 
-plotMDS(getM(MSet), sampNames = MSet$geo_accession,
-        sampGroups = MSet$statusFumante, dim=c(1, 3))
+
+```{r, fig.width=20, fig.height=8}
+para_png("par(mfrow=c(1,2));mdsPlot(getM(MSetQuantile), sampNames = MSetQuantile$geo_accession, sampGroups = MSetQuantile$statusFumante);mdsPlot(getM(MSetNoob), sampNames = MSetNoob$geo_accession, sampGroups = MSetNoob$statusFumante)",
+ 'Mset_quant_e_noob', units = 'in')
+```
 
 
-plotMDS(getM(MSet), top=1000, gene.selection="common", 
-        col=pal[factor(MSet$statusFumante)], dim=c(1,2));legend("topright", legend=levels(factor(MSet$statusFumante)), text.col=pal,
-       cex=0.7, bg="white")
 
 
 
-par(mfrow=c(1,3));densityPlot(rgSet_combined, sampGroups = rgSet_combined$statusFumante, main='Sem Normalização');densityPlot(getBeta(MSet), sampGroups = MSet$statusFumante, main='Normalização Quantílica');densityPlot(getBeta(MSet_noob), sampGroups = MSet_noob$statusFumante, main='Normalização Noob')
+```{r}
+
+para_png("densityPlot(getBeta(MSetQuantile), sampGroups = MSetQuantile$statusFumante, main='Normalização Quantílica')", 'Density-plot-quantilica', unit='cm')
+
+```
+
+
+```{r}
+para_png("densityPlot(getBeta(MSetNoob), sampGroups = MSetNoob$statusFumante, main='Normalização Noob')", 'Density-plot-noob', unit='cm')
 
 # nota-se que o preprocessamento Noob não foi bem ajustado aos dados, e portanto
 # não será utilizado a partir deste ponto, sem a utilização dos demais plots
-rm(MSet_noob)
-
-
+rm(MSetNoob)
 ```
+
+
+
+
