@@ -11,11 +11,18 @@ A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a
 
 #### Pacotes exigidos
 
-```{r}
+```{r pacotes exigidos}
 knitr::opts_chunk$set(echo = TRUE)
 # pacotes usados e que não são do Bioconductor
 pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer', 
             'devtools', 'factoextra', 'limma')
+
+# O for loop a seguir instala os pacotes listados acima,
+# e, se listados aqui, são usados diretamente no .rmd. 
+# Caso exista exitância em instalar algum pacote aqui
+# listado, é recomendado procurar um substituto que
+# contenha as mesmas funcionalidades que o originalmente
+# listado.
 
 for(pacote in pacotes){
   if(!pacote %in% installed.packages())
@@ -25,6 +32,9 @@ for(pacote in pacotes){
 
 library(minfi)
 library(GEOquery)
+
+# pacotes possivelmente necessários de se instalar na primeira vez que rodar o código.
+
 # library(IlluminaHumanMethylation450kmanifest)
 # library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 # BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
@@ -58,21 +68,27 @@ No `minfi`, pacote usado para processar os dados, podemos listar os tipos de dad
 4. O `GRSet` - `Genomic Ratio Set` - é a próxima classe a ser gerada: é originada da fusão de 3.1 e 3.2, sendo apenas o `Ratio Set` mapeado ao genoma.
 
 
-
-
-
-```{r}
+```{r funções auxiliares e organizacao de pastas e arquivos}
 
 # algumas funções auxiliares
 
-para_png = function(plotAsString, plotName, plotRes=TRUE, ...){
-  dirr = paste0(getwd(), '/images/', plotName, '.png')
-  png(dirr, res = 180, width = 20, height = 10, ...)
+para_png = function(plotAsString, plotName, plotRes=TRUE,
+                    dirToSave='/images', ...){
+  # aceita argumentos keyWord da função png  (...)
+  # plotRes só funciona bem em chunks do .rmd
+  # cria diretório "/images/" se esse não existe
+  dirr = paste0(getwd(), dirToSave)
+  if(!isDirectory(dirr)) # se não existe, cria
+    dir.create(dirr)  
+  
+  file_loc = paste0(dirr, '/', plotName, '.png')
+  
+  png(file_loc, res = 180, width = 20, height = 10, ...)
   #
   eval(parse(text=plotAsString))
   #
   invisible(dev.off())
-  cat(paste('Salvo em:', dirr))
+  cat(paste('Salvo em:', file_loc))
   if(plotRes) eval(parse(text=plotAsString))
 }
 
@@ -93,18 +109,19 @@ cria_dir_adiciona_arquivos = function(nomeDir, arquivos, print_results=FALSE){
     print(list.files(caminho))
 }
 
-# File unzipper
+# Deszipador de arquivos
 unzip_files = function(files){
   for(file in files){
-    if(file.exists(file) & isGzipped(file))
-      gunzip(file, remove=T, skip=T)
+    if(file.exists(file) & isGzipped(file) &
+       !file.exists(sub(pattern = '.gz$', x = file, replacement = '')))
+      gunzip(file, remove=T, )
   }
 }
 
 
-# untar("GSE147430_RAW.tar", exdir = "GSE147430") # só deve ser feito uma vez
+untar("GSE147430_RAW.tar", exdir = "GSE147430") # só deve ser feito uma vez
 
-idatFiles = paste0('GSE147430/',list.files('GSE147430/', pattern = "idat"))
+idatFiles = paste0('GSE147430/',list.files('GSE147430/', pattern = "idat.gz$"))
 # nomes dos arquivos idat com a adição do caminho até eles do diretório atual
 
 # 91% dos arquivos são 450k (121)
@@ -135,8 +152,8 @@ cria_dir_adiciona_arquivos(nomeDir = dir_EPIC, arquivos = files_EPIC)
 
 # checando se o tamanho permanece o mesmo, mas em pastas separadas
 
-tam_separado = (sum(file.size(paste0(dir_EPIC, "/", list.files(dir_EPIC))))
-                + sum(file.size(paste0(dir_450k, "/", list.files(dir_450k))))) / 1e6
+tam_separado = (sum(file.size(paste0(dir_EPIC, "/", list.files(dir_EPIC, pattern='.idat.gz$'))))
+                + sum(file.size(paste0(dir_450k, "/", list.files(dir_450k, pattern='.idat.gz$'))))) / 1e6
 
 tam_original = sum(file.size(idatFiles)) / 1e6
 
@@ -155,15 +172,15 @@ unlink(idatFiles)
 files_450k = list.files(dir_450k, recursive = T, full.names = T, pattern = ".gz")
 files_EPIC = list.files(dir_EPIC, recursive = T, full.names = T, pattern = ".gz")
 
-# deszipando arquivos IDAT
-unzip_files(files_450k)
-unzip_files(files_EPIC)
+# deszipando arquivos IDAT, removendo arquivos zipados para desocupar espaço
+unzip_files(files_450k); unlink(files_450k)
+unzip_files(files_EPIC); unlink(files_EPIC)
 ```
 
 
 
 
-```{r}
+```{r leitura e pre-processamento inicial dos dados}
 # lendo experimentos 450k e EPIC separadamente
 
 exp_450k = read.metharray.exp(dir_450k)
@@ -227,7 +244,7 @@ rm(pd.All)
 O controle de qualidade é parte essencial de qualquer análise onde muitas amostras são feitas, e é preciso controlar pelos problemas que podem ser causados pelo ambiente, erros humanos, etc. Ele confere toda a parte anterior à análise diferencial e que procura filtrar os dados de forma a remover *CpGs* com baixa qualidade, ou que não foram de fato detectados. Para esta comparação inicial de detecção, compara-se os *CpGs* de cada indivíduo com *probes* controle, que são compostos apenas de sinal de fundo, ou o ruído do ambiente. Se houver uma diferença significativa - de acordo com um p-valor a ser determinado - então dado *CpG* foi detectado. Quando este p-valor é grande, é um sinal de que aquele *CpG* é composto, em boa parte, por ruído de fundo, configurando um sinal ruim.
 
 
-```{r}
+```{r detP}
 detP = detectionP(rgSet_combined)
 falharam <- detP > 0.01
 
@@ -236,7 +253,7 @@ para_png("barplot(colMeans(detP), xlab = 'Amostra', ylab = 'P-valores de detecç
 
 
 
-```{r}
+```{r plotQC}
 MSet_raw = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
 
 # criando o methylSet, podemos fazer outro plot, que separa - ou agrupa - as
@@ -261,7 +278,7 @@ para_png("plotQC(qc)", 'qc', units = 'cm')
 
 
 
-```{r}
+```{r amostras ruins detP}
 # remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
 # 0.05. Assim, amostras que tiverem um p-valor maior que 0.05 serão automaticamente
 # removidas. Foram detectadas 2 amostras ruins, mostradas a seguir. Essas serão
@@ -275,7 +292,7 @@ quais_amostras_detp = which(amostra_ruim_det==TRUE)
 
 
 
-```{r}
+```{r density plot raw}
 # usando o cutoff disponível na própria função plotQC, encontramos 
 # as amostras que são consideradas ruins e as removemos de análises posteriores.
 meds <- (qc$mMed + qc$uMed)/2
@@ -294,14 +311,14 @@ para_png("densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante, main
 
 
 
-```{r}
+```{r density bean plot raw}
 # outros plots estão disponíveis, como do densityBeanPlot:
 para_png("densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)", 'density-bean-plot-raw', units = 'in')
 ```
 
 
 
-```{r}
+```{r taxa media de falha por amostra}
 # plot interessante para observar se há algum paciente com 
 # problemas maiores de detecção dos probes
 
@@ -312,7 +329,7 @@ para_png("plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam
 
 
 
-```{r, fig.width=20,}
+```{r mdsPlot raw}
 # índices a serem removidos antes da normalização  
 probesRemover = rowMeans(falharam) > 0.05
 probesRemover = which(probesRemover==TRUE)
@@ -335,7 +352,7 @@ para_png("mdsPlot(getM(MSet_raw),
 
 
 
-```{r}
+```{r pca eixos 1 e 3 raw}
 # O PCA parece ter funcionado bem com as componentes 1 e 4, podendo-se ver algum
 # tipo de padrão. No entanto, é apenas um resultado preliminar, já que esses
 # dados são enteriores à normalização aplicada, nos dados raw.
@@ -347,7 +364,7 @@ para_png("print(fviz_pca_ind(prcomp(rgset_samp, center = T, scale.=T), habillage
 ```
 
 
-```{r}
+```{r rgset filtros iniciais}
 # removendo amostras e probes problemáticos
 rgSet_combinedFiltrado = rgSet_combined[-probesRemover, -amostrasARemover]
 ```
@@ -377,7 +394,7 @@ Serão testadas algumas formas diferentes de normalização. As duas candidatas 
 <!-- gset <- dropLociWithSnps(gset, snps=c("SBE","CpG"), maf=0) -->
 
 
-```{r}
+```{r De rgSet para MSet (normalizacao)}
 rm(detP, falharam, MSet_raw, rgset_samp, qc)
 
 # paleta de cores
@@ -399,7 +416,7 @@ MSetNoob = preprocessNoob(rgSet_combined)
 
 
 
-```{r, fig.width=20, fig.height=8}
+```{r mdsPlot quantile e noob, fig.width=20, fig.height=8}
 para_png("par(mfrow=c(1,2));mdsPlot(getM(MSetQuantile), sampNames = MSetQuantile$geo_accession, sampGroups = MSetQuantile$statusFumante);mdsPlot(getM(MSetNoob), sampNames = MSetNoob$geo_accession, sampGroups = MSetNoob$statusFumante)",
  'Mset_quant_e_noob', units = 'in')
 ```
@@ -408,14 +425,14 @@ para_png("par(mfrow=c(1,2));mdsPlot(getM(MSetQuantile), sampNames = MSetQuantile
 
 
 
-```{r}
+```{r densityPlot quantile}
 
 para_png("densityPlot(getBeta(MSetQuantile), sampGroups = MSetQuantile$statusFumante, main='Normalização Quantílica')", 'Density-plot-quantilica', unit='cm')
 
 ```
 
 
-```{r}
+```{r densityPlot Noob}
 para_png("densityPlot(getBeta(MSetNoob), sampGroups = MSetNoob$statusFumante, main='Normalização Noob')", 'Density-plot-noob', unit='cm')
 
 # nota-se que o preprocessamento Noob não foi bem ajustado aos dados, e portanto
@@ -423,6 +440,15 @@ para_png("densityPlot(getBeta(MSetNoob), sampGroups = MSetNoob$statusFumante, ma
 rm(MSetNoob)
 ```
 
+Analisando os resultados obtidos nas normalizações determinadas, conclui-se que a normalização quantílica performou melhor. Assim, esta será usada nas análises posteriores, envolvendo a análise diferencial de metilação. Agora, certa atenção deve ser dada a outros tipos de `probes` que devem ser filtrados antes da análise diferencial. `Probes` relativos ao sexo dos indivíduos (cromossomos X e Y), `cross-hibridized probes`  e `Single Nucleotide Polymorphism` (ou simplesmente `SNP`) devem ser removidos, no geral, como boa prática, quando não são do interesse geral da análise.
+
+
+<!-- OS SEXOS FORAM PREDITOS NA NORMALIZAÇÃO, ENTÃO DA PRA FAZER ALGUNS PLOTS COM ISSO COMO SEPARADOR -->
+
+
+```{r}
+
+```
 
 
 
