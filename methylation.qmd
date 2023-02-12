@@ -15,7 +15,7 @@ A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a
 knitr::opts_chunk$set(echo = TRUE)
 # pacotes usados e que não são do Bioconductor
 pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer', 
-            'devtools', 'factoextra', 'limma')
+            'devtools', 'factoextra', 'limma', 'umap')
 
 # O for loop a seguir instala os pacotes listados acima,
 # e, se listados aqui, são usados diretamente no .rmd. 
@@ -33,14 +33,17 @@ for(pacote in pacotes){
 library(minfi)
 library(GEOquery)
 
-# pacotes possivelmente necessários de se instalar na primeira vez que rodar o código.
+# abaixo, pacotes possivelmente necessários de se instalar na primeira vez que rodar o código.
 
-# library(IlluminaHumanMethylation450kmanifest)
-# library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+
 # BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
 # BiocManager::install("IlluminaHumanMethylationEPICmanifest")
 # BiocManager::install('minfiData')
+# BiocManager::install('sva')
 # devtools::install_github("markgene/maxprobes")
+# library(IlluminaHumanMethylation450kmanifest)
+library(sva)
+library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 ```
 
 Após a instalação dos pacotes, pode-se iniciar a leitura dos dados.
@@ -68,7 +71,7 @@ No `minfi`, pacote usado para processar os dados, podemos listar os tipos de dad
 4. O `GRSet` - `Genomic Ratio Set` - é a próxima classe a ser gerada: é originada da fusão de 3.1 e 3.2, sendo apenas o `Ratio Set` mapeado ao genoma.
 
 
-```{r funções auxiliares e organizacao de pastas e arquivos}
+```{r funções auxiliares}
 
 # algumas funções auxiliares
 
@@ -88,8 +91,9 @@ para_png = function(plotAsString, plotName, plotRes=TRUE,
   eval(parse(text=plotAsString))
   #
   invisible(dev.off())
-  cat(paste('Salvo em:', file_loc))
   if(plotRes) eval(parse(text=plotAsString))
+  
+  cat(paste('Salvo em:', file_loc))
 }
 
 # 
@@ -117,8 +121,12 @@ unzip_files = function(files){
       gunzip(file, remove=T, )
   }
 }
+```
 
 
+
+
+```{r organizacao de pastas e arquivos}
 untar("GSE147430_RAW.tar", exdir = "GSE147430") # só deve ser feito uma vez
 
 idatFiles = paste0('GSE147430/',list.files('GSE147430/', pattern = "idat.gz$"))
@@ -191,9 +199,11 @@ sampleNames(exp_EPIC) = sub('.*?_', '',sampleNames(exp_EPIC))
 
 # geoMats e processamento delas
 
-geoMat = getGEO('GSE147430')
+geoMat = getGEO('GSE147430',)
 pd.450k = pData(geoMat$`GSE147430-GPL13534_series_matrix.txt.gz`)
 pd.EPIC = pData(geoMat$`GSE147430-GPL21145_series_matrix.txt.gz`)
+pd.450k$arrayDesign = '450K'
+pd.EPIC$arrayDesign = 'EPIC'
 rm(geoMat)
 
 
@@ -201,7 +211,7 @@ pd.All = rbind(pd.450k, pd.EPIC)
 
 # reduzir uso de memória
 rm(pd.450k, pd.EPIC)
-pdCols = c('title', 'geo_accession', 'smoking_status:ch1')
+pdCols = c('title', 'geo_accession', 'smoking_status:ch1', 'arrayDesign')
 
 # algumas correções nos dados dos pacientes
 
@@ -360,7 +370,7 @@ set.seed(42)
 rgset_samp = t(getMeth(sample(MSet_raw, 4000)))
 
 para_png("print(fviz_pca_ind(prcomp(rgset_samp, center = T, scale.=T), habillage = MSet_raw$statusFumante,
-             axes = c(1, 3), addEllipses = T, ellipse.level=0.95))", 'pca-raw', units = 'in')
+             axes = c(1, 3), addEllipses = T, ellipse.level=0.95))", 'pca-raw_comps1-3', units = 'in')
 ```
 
 
@@ -440,15 +450,103 @@ para_png("densityPlot(getBeta(MSetNoob), sampGroups = MSetNoob$statusFumante, ma
 rm(MSetNoob)
 ```
 
-Analisando os resultados obtidos nas normalizações determinadas, conclui-se que a normalização quantílica performou melhor. Assim, esta será usada nas análises posteriores, envolvendo a análise diferencial de metilação. Agora, certa atenção deve ser dada a outros tipos de `probes` que devem ser filtrados antes da análise diferencial. `Probes` relativos ao sexo dos indivíduos (cromossomos X e Y), `cross-hibridized probes`  e `Single Nucleotide Polymorphism` (ou simplesmente `SNP`) devem ser removidos, no geral, como boa prática, quando não são do interesse geral da análise.
+Analisando os resultados obtidos nas normalizações determinadas, conclui-se que a normalização quantílica performou melhor. Assim, esta será usada nos passos posteriores, tal como a análise diferencial de metilação. Agora, certa atenção deve ser dada a outros tipos de `probes` que devem ser filtrados antes da análise diferencial. `Probes` relativos ao sexo dos indivíduos (cromossomos X e Y), `cross-hibridized probes`  e `Single Nucleotide Polymorphism` (ou simplesmente `SNP`) devem ser removidos, no geral, como boa prática, quando não são do interesse geral da análise.
 
 
 <!-- OS SEXOS FORAM PREDITOS NA NORMALIZAÇÃO, ENTÃO DA PRA FAZER ALGUNS PLOTS COM ISSO COMO SEPARADOR -->
 
 
-```{r}
+```{r filtros adicionais pós-normalização}
+ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+cpgsManter = !(featureNames(MSetQuantile) %in% ann450k$Name[ann450k$chr %in% c("chrX","chrY")])
+rm(ann450k)
+# removendo CPGs relacionados ao sexo dos indivíduos.
+# antes, nrow=450_292, agora nrow=439_769
+
+
+MSetQuantile = MSetQuantile[cpgsManter, ]
+
+
+
+# removendo SNP (single nucleotide polymorphism)
+MSetQuantile <- dropLociWithSnps(MSetQuantile)
+
+# nrow=423_718
+
+
+# removendo CPGs cross-reativos ref: [https://www.tandfonline.com/doi/full/10.4161/epi.23470]
+MSetQuantile <- maxprobes::dropXreactiveLoci(MSetQuantile)
+
+# nrow=391_064
+```
+
+
+```{r mds pós filtragens}
+para_png("mdsPlot(getM(MSetQuantile),
+        sampNames = MSetQuantile$geo_accession,
+        sampGroups=MSetQuantile$statusFumante, )", 'mdsplot-quantile-filtrado', units = 'in')
 
 ```
+
+
+```{r mds usando design do array como separador}
+para_png("mdsPlot(getM(MSetQuantile),
+        sampNames = MSetQuantile$geo_accession,
+        sampGroups=MSetQuantile$arrayDesign, )",
+        'mdsplot-quantile-filtrado-arrayDesign',
+        units = 'in')
+```
+
+
+
+```{r pca pós filtragens}
+set.seed(42)
+mset_samp = t(assay(sample(MSetQuantile, 4000)))
+
+para_png("print(fviz_pca_ind(prcomp(mset_samp, center = T, scale.=T), habillage = MSetQuantile$statusFumante, axes = c(1, 3), addEllipses = T, ellipse.level=0.95))",
+         'pca-quantile_filtered_comps1-3',
+         units = 'in')
+```
+
+
+
+```{r pca arrayDesign}
+para_png("print(fviz_pca_ind(prcomp(mset_samp, center = T, scale.=T), habillage = MSetQuantile$arrayDesign, axes = c(1, 3), addEllipses = T, ellipse.level=0.95))",
+         'pca-quantile_filtered_comps1-3-arrayDesign',
+         units = 'in')
+```
+
+
+```{r umap array design}
+MSetUmap = umap(mset_samp, preserve.seed = TRUE)
+para_png("plot(MSetUmap$layout, col=factor(MSetQuantile$arrayDesign), pch=16, main='UMap Usando o Design do Array como Grupo', xlab='Dimensão 1', ylab='Dimensão 2')",
+         'UMap-arrayDesign',
+         units='in')
+```
+
+
+```{r umap status fumante}
+para_png("plot(MSetUmap$layout, col=factor(MSetQuantile$statusFumante), pch=16, main='UMap Usando o Status de Fumo do Indivíduo como Grupo', xlab='Dimensão 1', ylab='Dimensão 2')",
+         'UMap-statusFumante',
+         units='in')
+
+```
+
+
+
+
+
+
+```{r SVA (surrogate variable analysis)}
+
+mval <- getM(MSetQuantile)
+pheno <- pData(MSetQuantile)
+mod <- model.matrix(~as.factor(statusFumante), data=pheno)
+mod0 <- model.matrix(~1, data=pheno)
+sva.results <- sva(mval, mod, mod0)
+
+```
+
 
 
 
