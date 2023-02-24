@@ -86,7 +86,7 @@ para_png = function(plotAsString, plotName, plotRes=TRUE,
   
   file_loc = paste0(dirr, '/', plotName, '.png')
   
-  png(file_loc, res = 180, width = 20, height = 10, ...)
+  png(file_loc, res=90, width=20, height=10, ...)
   #
   eval(parse(text=plotAsString))
   #
@@ -199,7 +199,7 @@ sampleNames(exp_EPIC) = sub('.*?_', '',sampleNames(exp_EPIC))
 
 # geoMats e processamento delas
 
-geoMat = getGEO('GSE147430',)
+geoMat = getGEO('GSE147430', GSEMatrix = TRUE, getGPL = FALSE, parseCharacteristics = FALSE)
 pd.450k = pData(geoMat$`GSE147430-GPL13534_series_matrix.txt.gz`)
 pd.EPIC = pData(geoMat$`GSE147430-GPL21145_series_matrix.txt.gz`)
 pd.450k$arrayDesign = '450K'
@@ -494,7 +494,7 @@ para_png("mdsPlot(getM(MSetQuantile),
         sampNames = MSetQuantile$geo_accession,
         sampGroups=MSetQuantile$arrayDesign, )",
         'mdsplot-quantile-filtrado-arrayDesign',
-        units = 'in')
+        units = 'cm')
 ```
 
 
@@ -530,6 +530,7 @@ para_png("plot(MSetUmap$layout, col=factor(MSetQuantile$statusFumante), pch=16, 
          'UMap-statusFumante',
          units='in')
 
+rm(MSetUmap)
 ```
 
 
@@ -537,15 +538,6 @@ para_png("plot(MSetUmap$layout, col=factor(MSetQuantile$statusFumante), pch=16, 
 
 
 
-```{r SVA (surrogate variable analysis)}
-
-mval <- getM(MSetQuantile)
-pheno <- pData(MSetQuantile)
-mod <- model.matrix(~as.factor(statusFumante), data=pheno)
-mod0 <- model.matrix(~1, data=pheno)
-sva.results <- sva(mval, mod, mod0)
-
-```
 
 
 
