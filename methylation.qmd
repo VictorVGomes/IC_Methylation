@@ -14,8 +14,23 @@ A instalação dos pacotes a serem utilizados é o primeiro passo para iniciar a
 ```{r pacotes exigidos}
 knitr::opts_chunk$set(echo = TRUE)
 # pacotes usados e que não são do Bioconductor
-pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer', 
-            'devtools', 'factoextra', 'limma', 'umap')
+pacotes = c("BiocManager",
+            'devtools',
+            "fs",
+            'R.utils',
+            'limma',
+            'RColorBrewer',
+            'factoextra',
+            'umap',
+            "IlluminaHumanMethylationEPICanno.ilm10b2.hg19",
+            "IlluminaHumanMethylationEPICmanifest",
+            'minfiData',
+            'sva',
+            'minfi',
+            'GEOquery',
+            'VennDetail',
+            'IlluminaHumanMethylation450kanno.ilmn12.hg19',
+            'missMethyl')
 
 # O for loop a seguir instala os pacotes listados acima,
 # e, se listados aqui, são usados diretamente no .rmd. 
@@ -24,26 +39,25 @@ pacotes = c("fs", 'R.utils', 'limma', 'RColorBrewer',
 # contenha as mesmas funcionalidades que o originalmente
 # listado.
 
-for(pacote in pacotes){
-  if(!pacote %in% installed.packages())
-    install.packages(pacote)
-  library(pacote, character.only = TRUE)}
+instalar_pacotes = function(pacotes){
+  for(pacote in pacotes){
+    if(!pacote %in% installed.packages())
+      r = tryCatch(install.packages(pacote), error=function(e) e, warning=function(w) w)
+    
+      if(exists('r') & !(pacote %in% installed.packages()))
+        rm(r)
+        BiocManager::install(pacote)
+    
+    library(pacote, character.only = TRUE)
+  }
+}
 
 
-library(minfi)
-library(GEOquery)
+instalar_pacotes(pacotes=pacotes)
 
-# abaixo, pacotes possivelmente necessários de se instalar na primeira vez que rodar o código.
+# pacote dificil de instalar
+devtools::install_github("markgene/maxprobes")
 
-
-# BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b2.hg19")
-# BiocManager::install("IlluminaHumanMethylationEPICmanifest")
-# BiocManager::install('minfiData')
-# BiocManager::install('sva')
-# devtools::install_github("markgene/maxprobes")
-# library(IlluminaHumanMethylation450kmanifest)
-library(sva)
-library(IlluminaHumanMethylation450kanno.ilmn12.hg19)
 ```
 
 Após a instalação dos pacotes, pode-se iniciar a leitura dos dados.
@@ -58,25 +72,24 @@ No caso dos dados sobre fumo, os arquivos .IDAT estão disponíveis em dois tipo
 
 No `minfi`, pacote usado para processar os dados, podemos listar os tipos de dados que formam uma análise:
 
-1. `rgSet`: formato que armazena as intensidades `red` e `green` da análise. Dependendo de como os dados foram lidos, também contém os dados dos fenótipos. É importante notar que as intensidades armazenadas aqui são apenas das cores `red` e `green`, sendo diferentes das intensidades relativas à metilação e não metilação, adquiridas posteriormente;
+1.  `rgSet`: formato que armazena as intensidades `red` e `green` da análise. Dependendo de como os dados foram lidos, também contém os dados dos fenótipos. É importante notar que as intensidades armazenadas aqui são apenas das cores `red` e `green`, sendo diferentes das intensidades relativas à metilação e não metilação, adquiridas posteriormente;
 
-2. `MSet`: `methylSet`, é o formato que armazena as intensidades de metilação (e de não metilação) de cada `probe`, para cada amostra. A forma mais simples de obter essa estrutura é usando a função `preprocessRaw()` no `rgSet` (importante notar que não é feita nenhuma normalização nos dados quando a função usada para chegar ao `Mset` é essa);
+2.  `MSet`: `methylSet`, é o formato que armazena as intensidades de metilação (e de não metilação) de cada `probe`, para cada amostra. A forma mais simples de obter essa estrutura é usando a função `preprocessRaw()` no `rgSet` (importante notar que não é feita nenhuma normalização nos dados quando a função usada para chegar ao `Mset` é essa);
 
-3. Ao ponto em que tem-se o `MSet`, é possível criar duas novas estruturas: o `GMSet` e o `RSet` 
+3.  Ao ponto em que tem-se o `MSet`, é possível criar duas novas estruturas: o `GMSet` e o `RSet`
 
-3.1 O `GMSet`, ou `Genomic Methyl Set`, é quando o `MSet` é mapeado ao genoma usando a função `mapToGenome()`. Isso significa que cada probe do `MSet` terá sua coordenada genômica, além de algumas informações adicionais [ref https://bioconductor.org/help/course-materials/2014/BioC2014/minfi_BioC2014.pdf pag. 8].
+3.1 O `GMSet`, ou `Genomic Methyl Set`, é quando o `MSet` é mapeado ao genoma usando a função `mapToGenome()`. Isso significa que cada probe do `MSet` terá sua coordenada genômica, além de algumas informações adicionais \[ref https://bioconductor.org/help/course-materials/2014/BioC2014/minfi_BioC2014.pdf pag. 8\].
 
 3.2 Já o `RSet`, ou `Ratio Set`, refere-se ao `MSet` convertido em uma classe feita para armazenar os valores de Beta e/ou valores M, sendo assim, parte-se das intensidades metiladas e não metiladas e consegue-se os valores de beta e/ou M. É possível obter um `copy number`, a matriz com a soma das intensidades metiladas e não metiladas, para referência futura, dado que esse mapeamento é não-reversível.
 
-4. O `GRSet` - `Genomic Ratio Set` - é a próxima classe a ser gerada: é originada da fusão de 3.1 e 3.2, sendo apenas o `Ratio Set` mapeado ao genoma.
-
+4.  O `GRSet` - `Genomic Ratio Set` - é a próxima classe a ser gerada: é originada da fusão de 3.1 e 3.2, sendo apenas o `Ratio Set` mapeado ao genoma.
 
 ```{r funções auxiliares}
 
 # algumas funções auxiliares
 
 para_png = function(plotAsString, plotName, plotRes=TRUE,
-                    dirToSave='/images', ...){
+                    dirToSave='/images', width=20, height=10, ...){
   # aceita argumentos keyWord da função png  (...)
   # plotRes só funciona bem em chunks do .rmd
   # cria diretório "/images/" se esse não existe
@@ -86,7 +99,7 @@ para_png = function(plotAsString, plotName, plotRes=TRUE,
   
   file_loc = paste0(dirr, '/', plotName, '.png')
   
-  png(file_loc, res=90, width=20, height=10, ...)
+  png(file_loc, res=90, width=width, height=height, ...)
   #
   eval(parse(text=plotAsString))
   #
@@ -122,7 +135,6 @@ unzip_files = function(files){
   }
 }
 ```
-
 
 
 
@@ -186,8 +198,6 @@ unzip_files(files_EPIC); unlink(files_EPIC)
 ```
 
 
-
-
 ```{r leitura e pre-processamento inicial dos dados}
 # lendo experimentos 450k e EPIC separadamente
 
@@ -200,6 +210,8 @@ sampleNames(exp_EPIC) = sub('.*?_', '',sampleNames(exp_EPIC))
 # geoMats e processamento delas
 
 geoMat = getGEO('GSE147430', GSEMatrix = TRUE, getGPL = FALSE, parseCharacteristics = FALSE)
+# a função getGEO deve ser rodada apenas como "getGEO('GSE147430')" na primeira vez, para poder criar o cache do
+# arquivo usado nas próximas vezes
 pd.450k = pData(geoMat$`GSE147430-GPL13534_series_matrix.txt.gz`)
 pd.EPIC = pData(geoMat$`GSE147430-GPL21145_series_matrix.txt.gz`)
 pd.450k$arrayDesign = '450K'
@@ -246,13 +258,11 @@ pData(rgSet_combined) = pd.All
 rm(pd.All)
 ```
 
-
 ### Preprocessamento dos Dados
 
 #### Controle de Qualidade
 
 O controle de qualidade é parte essencial de qualquer análise onde muitas amostras são feitas, e é preciso controlar pelos problemas que podem ser causados pelo ambiente, erros humanos, etc. Ele confere toda a parte anterior à análise diferencial e que procura filtrar os dados de forma a remover *CpGs* com baixa qualidade, ou que não foram de fato detectados. Para esta comparação inicial de detecção, compara-se os *CpGs* de cada indivíduo com *probes* controle, que são compostos apenas de sinal de fundo, ou o ruído do ambiente. Se houver uma diferença significativa - de acordo com um p-valor a ser determinado - então dado *CpG* foi detectado. Quando este p-valor é grande, é um sinal de que aquele *CpG* é composto, em boa parte, por ruído de fundo, configurando um sinal ruim.
-
 
 ```{r detP}
 detP = detectionP(rgSet_combined)
@@ -260,8 +270,6 @@ falharam <- detP > 0.01
 
 para_png("barplot(colMeans(detP), xlab = 'Amostra', ylab = 'P-valores de detecção', names.arg = '', col=factor(pData(rgSet_combined)$statusFumante), las=2, cex.lab=1.5, cex.sub=1.5); abline(h=0.05, col='red');legend('topleft',legend=levels(factor(pData(rgSet_combined)$statusFumante)), fill=factor(pData(rgSet_combined)$statusFumante), bg='white')", 'Det-P-por-amostra', units = 'in')
 ```
-
-
 
 ```{r plotQC}
 MSet_raw = preprocessRaw(rgSet_combined) # usado para controle de qualidade, também
@@ -284,10 +292,6 @@ qc = getQC(MSet_raw)
 para_png("plotQC(qc)", 'qc', units = 'cm')
 ```
 
-
-
-
-
 ```{r amostras ruins detP}
 # remover p-valores maiores que um limiar. Neste caso, foi escolhido o valor
 # 0.05. Assim, amostras que tiverem um p-valor maior que 0.05 serão automaticamente
@@ -297,10 +301,6 @@ para_png("plotQC(qc)", 'qc', units = 'cm')
 amostra_ruim_det = colMeans(falharam) > 0.01
 quais_amostras_detp = which(amostra_ruim_det==TRUE)
 ```
-
-
-
-
 
 ```{r density plot raw}
 # usando o cutoff disponível na própria função plotQC, encontramos 
@@ -318,15 +318,10 @@ amostrasARemover = union.Vector(quais_amostras_detp, whichBad)
 para_png("densityPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante, main='Sem Normalização')",'density-plot-raw', units = 'cm')
 ```
 
-
-
-
 ```{r density bean plot raw}
 # outros plots estão disponíveis, como do densityBeanPlot:
 para_png("densityBeanPlot(MSet_raw, sampGroups = pData(MSet_raw)$statusFumante)", 'density-bean-plot-raw', units = 'in')
 ```
-
-
 
 ```{r taxa media de falha por amostra}
 # plot interessante para observar se há algum paciente com 
@@ -336,8 +331,6 @@ para_png("plot(as.factor(pData(rgSet_combined)$geo_accession), colMeans(falharam
      main='Taxa média de falha por amostra', xlab='Amostra',
      ylab='taxa de probes com p-valor de detecção > 0.01', cex.sub=1.7, cex.lab=1.7, cex.main=2)", 'pvalor-falha-amostra', units = 'in')
 ```
-
-
 
 ```{r mdsPlot raw}
 # índices a serem removidos antes da normalização  
@@ -360,8 +353,6 @@ para_png("mdsPlot(getM(MSet_raw),
         sampGroups=rgSet_combined$statusFumante, )", 'mdsplot-raw', units = 'in')
 ```
 
-
-
 ```{r pca eixos 1 e 3 raw}
 # O PCA parece ter funcionado bem com as componentes 1 e 4, podendo-se ver algum
 # tipo de padrão. No entanto, é apenas um resultado preliminar, já que esses
@@ -373,35 +364,15 @@ para_png("print(fviz_pca_ind(prcomp(rgset_samp, center = T, scale.=T), habillage
              axes = c(1, 3), addEllipses = T, ellipse.level=0.95))", 'pca-raw_comps1-3', units = 'in')
 ```
 
-
 ```{r rgset filtros iniciais}
 # removendo amostras e probes problemáticos
 rgSet_combinedFiltrado = rgSet_combined[-probesRemover, -amostrasARemover]
+rm(rgSet_combined)
 ```
-
 
 ### Normalização
 
 Serão testadas algumas formas diferentes de normalização. As duas candidatas serão a normalização quantílica e Noob. Será feita a demonstração da normalização com e sem as amostras ruins determinadas na parte de controle de qualidade, a fim de mostrar qual a diferença de ter-se apenas boas amostras nos dados analisados. Os plots feitos acima serão refeitos, levando em consideração a correção dos dados, para efeitos de comparação.
-
-<!-- **DROP DE PROBES QUE NÃO FOI FEITO POR CONTROLE DE QUALIDADE PODE SER FEITO DEPOIS DA NORMALIZAÇÃO -->
-<!-- DADO QUE NÃO HÁ PROBLEMA DE VALOR NO PROBE, E SIM EFEITO ESPECÍFICO DELE QUE QUER-SE EVITAR* -->
-<!-- PARA DROPAR PROBES CROSS-REATIVOS::: -->
-<!-- MsetEx_noXloci <- maxprobes::dropXreactiveLoci(MsetEx) -->
-<!-- MsetEx_noXloci -->
-<!-- Depending on the nature of your samples and your biological question you may also choose to filter out the probes from the X and Y chromosomes or probes that are known to have common SNPs at the CpG site. As the samples in this dataset were all derived from male donors, we will not be removing the sex chromosome probes as part of this analysis, however example code is provided below. A different dataset, which contains both male and female samples, is used to demonstrate a Differential Variability analysis and provides an example of when sex chromosome removal is necessary (Figure 13). -->
-
-<!-- # if your data includes males and females, remove probes on the sex chromosomes -->
-<!-- keep <- !(featureNames(mSetSqFlt) %in% ann450k$Name[ann450k$chr %in%  -->
-<!--                                                         c("chrX","chrY")]) -->
-<!-- table(keep) -->
-<!-- mSetSqFlt <- mSetSqFlt[keep,] -->
-<!-- There is a function in minfi that provides a simple interface for the removal of probes where common SNPs may affect the CpG. You can either remove all probes affected by SNPs (default), or only those with minor allele frequencies greater than a specified value. -->
-
-<!-- # remove probes with SNPs at CpG site -->
-<!-- mSetSqFlt <- dropLociWithSnps(mSetSqFlt) -->
-<!-- mSetSqFlt -->
-<!-- gset <- dropLociWithSnps(gset, snps=c("SBE","CpG"), maf=0) -->
 
 
 ```{r De rgSet para MSet (normalizacao)}
@@ -423,24 +394,16 @@ MSetQuantile = preprocessQuantile(object = rgSet_combinedFiltrado,
 MSetNoob = preprocessNoob(rgSet_combined)
 ```
 
-
-
-
 ```{r mdsPlot quantile e noob, fig.width=20, fig.height=8}
 para_png("par(mfrow=c(1,2));mdsPlot(getM(MSetQuantile), sampNames = MSetQuantile$geo_accession, sampGroups = MSetQuantile$statusFumante);mdsPlot(getM(MSetNoob), sampNames = MSetNoob$geo_accession, sampGroups = MSetNoob$statusFumante)",
  'Mset_quant_e_noob', units = 'in')
 ```
-
-
-
-
 
 ```{r densityPlot quantile}
 
 para_png("densityPlot(getBeta(MSetQuantile), sampGroups = MSetQuantile$statusFumante, main='Normalização Quantílica')", 'Density-plot-quantilica', unit='cm')
 
 ```
-
 
 ```{r densityPlot Noob}
 para_png("densityPlot(getBeta(MSetNoob), sampGroups = MSetNoob$statusFumante, main='Normalização Noob')", 'Density-plot-noob', unit='cm')
@@ -450,11 +413,9 @@ para_png("densityPlot(getBeta(MSetNoob), sampGroups = MSetNoob$statusFumante, ma
 rm(MSetNoob)
 ```
 
-Analisando os resultados obtidos nas normalizações determinadas, conclui-se que a normalização quantílica performou melhor. Assim, esta será usada nos passos posteriores, tal como a análise diferencial de metilação. Agora, certa atenção deve ser dada a outros tipos de `probes` que devem ser filtrados antes da análise diferencial. `Probes` relativos ao sexo dos indivíduos (cromossomos X e Y), `cross-hibridized probes`  e `Single Nucleotide Polymorphism` (ou simplesmente `SNP`) devem ser removidos, no geral, como boa prática, quando não são do interesse geral da análise.
-
+Analisando os resultados obtidos nas normalizações determinadas, conclui-se que a normalização quantílica performou melhor. Assim, esta será usada nos passos posteriores, tal como a análise diferencial de metilação. Agora, certa atenção deve ser dada a outros tipos de `probes` que devem ser filtrados antes da análise diferencial. `Probes` relativos ao sexo dos indivíduos (cromossomos X e Y), `cross-hibridized probes` e `Single Nucleotide Polymorphism` (ou simplesmente `SNP`) devem ser removidos, no geral, como boa prática, quando não são do interesse geral da análise.
 
 <!-- OS SEXOS FORAM PREDITOS NA NORMALIZAÇÃO, ENTÃO DA PRA FAZER ALGUNS PLOTS COM ISSO COMO SEPARADOR -->
-
 
 ```{r filtros adicionais pós-normalização}
 ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
@@ -480,14 +441,12 @@ MSetQuantile <- maxprobes::dropXreactiveLoci(MSetQuantile)
 # nrow=391_064
 ```
 
-
 ```{r mds pós filtragens}
 para_png("mdsPlot(getM(MSetQuantile),
         sampNames = MSetQuantile$geo_accession,
         sampGroups=MSetQuantile$statusFumante, )", 'mdsplot-quantile-filtrado', units = 'in')
 
 ```
-
 
 ```{r mds usando design do array como separador}
 para_png("mdsPlot(getM(MSetQuantile),
@@ -496,8 +455,6 @@ para_png("mdsPlot(getM(MSetQuantile),
         'mdsplot-quantile-filtrado-arrayDesign',
         units = 'cm')
 ```
-
-
 
 ```{r pca pós filtragens}
 set.seed(42)
@@ -508,22 +465,21 @@ para_png("print(fviz_pca_ind(prcomp(mset_samp, center = T, scale.=T), habillage 
          units = 'in')
 ```
 
-
-
 ```{r pca arrayDesign}
 para_png("print(fviz_pca_ind(prcomp(mset_samp, center = T, scale.=T), habillage = MSetQuantile$arrayDesign, axes = c(1, 3), addEllipses = T, ellipse.level=0.95))",
          'pca-quantile_filtered_comps1-3-arrayDesign',
          units = 'in')
 ```
 
-
 ```{r umap array design}
 MSetUmap = umap(mset_samp, preserve.seed = TRUE)
 para_png("plot(MSetUmap$layout, col=factor(MSetQuantile$arrayDesign), pch=16, main='UMap Usando o Design do Array como Grupo', xlab='Dimensão 1', ylab='Dimensão 2')",
          'UMap-arrayDesign',
-         units='in')
+         units='px',
+         width=900,
+         height=500,
+)
 ```
-
 
 ```{r umap status fumante}
 para_png("plot(MSetUmap$layout, col=factor(MSetQuantile$statusFumante), pch=16, main='UMap Usando o Status de Fumo do Indivíduo como Grupo', xlab='Dimensão 1', ylab='Dimensão 2')",
@@ -534,11 +490,203 @@ rm(MSetUmap)
 ```
 
 
+Decidiu-se, por conta da perfeita separação entre os designs de array, que a análise seguirá apenas com os arrays do tipo "450K". A filtragem é feita a seguir:
+
+```{r}
+MSetQuantile = MSetQuantile[,MSetQuantile$arrayDesign=='450K']
+```
+
+```{r}
+dim(MSetQuantile)
+MSetQuantile$arrayDesign # sobrou apenas 450K
+                         # removendo a coluna referente a esta variável, já que não tem mais importância
+colData(MSetQuantile) = colData(MSetQuantile)[, -which(colnames(colData(MSetQuantile)) == 'arrayDesign')]
+```
+
+
+```{r}
+MSetQuantile$predictedSex = ifelse(MSetQuantile$predictedSex=='F'|MSetQuantile$predictedSex==0, 0, 1)
+design = model.matrix(~ MSetQuantile$statusFumante)
+colnames(design) = c('Intercepto', 'fumante')
+fit = lmFit(getM(MSetQuantile), design)
+fit = eBayes(fit)
+tt_fumante = topTable(fit, )
+tt_fumante
+updown_fumante = decideTests(fit)
+summary(updown_fumante)
+```
+
+
+
+```{r}
+design2 = model.matrix(~ MSetQuantile$statusFumante + MSetQuantile$predictedSex)
+colnames(design2) = c('nao_fumante_mulher', 'fumante', 'sexo_masculino')
+fit2 = lmFit(getM(MSetQuantile), design2)
+fit2 = eBayes(fit2)
+tt_full = topTable(fit2,)
+tt_full
+updown_full = decideTests(fit2)
+summary(updown_full)
+```
+
+
+
+```{r}
+a = venndetail(list(fumantes_fit1=rownames(updown_full[(updown_fumante[, 'fumante']==1), 1]), fumantes_fit2=rownames(updown_full[(updown_full[, 'fumante']==1), 1])))
+plot(a)
+```
+
+
+
+
+```{r}
+a = venndetail(list(fumantes_fit1=rownames(updown_full[(updown_fumante[, 'fumante']==-1), 1]), fumantes_fit2 = rownames(updown_full[(updown_full[, 'fumante']==-1), 1])))
+plot(a)
+```
+
+Considerando que a mudança de CpGs metilados foi mínima, é justo dizer que o sexo ajuda a explicar a variância, mas não é útil na identificação de CpGs interessantes para análises posteriores.
+
+# Gene Ontology
+
+Testando algumas coisas sobre GO.
+
+```{r}
+cpgs_fumante = rownames(updown_fumante[updown_fumante[,"fumante"]!=0, ])
+gst = gometh(sig.cpg=cpgs_fumante, all.cpg=rownames(MSetQuantile), collection="GO",
+              plot.bias=TRUE)
+```
+
+
+```{r}
+topGSA(gst, n=10)
+```
+
+
+
+## Outra forma de filtrar os arrays do  tipo EPIC é antes da normalização:
+
+```{r filtrando para 450k antes de normalizar}
+rgSet_combinedFiltrado_450k = rgSet_combinedFiltrado[, rgSet_combinedFiltrado$arrayDesign=='450K']
+```
+
+
+```{r normalização quantilica}
+mset_quantile_450k = preprocessQuantile(
+   object = rgSet_combinedFiltrado_450k,
+   fixOutliers = TRUE, 
+   removeBadSamples = TRUE,
+   badSampleCutoff = 10.5
+)
+# nrow=450_292
+```
+
+
+```{r filtragens adicionais 450knorm}
+ann450k = getAnnotation(IlluminaHumanMethylation450kanno.ilmn12.hg19)
+cpgsManter = !(featureNames(mset_quantile_450k) %in% ann450k$Name[ann450k$chr %in% c("chrX","chrY")])
+rm(ann450k)
+
+mset_quantile_450k = mset_quantile_450k[cpgsManter, ]
+# removendo CPGs relacionados ao sexo dos indivíduos.
+# antes, nrow=450_292, agora nrow=439_769
+
+
+# removendo SNP (single nucleotide polymorphism)
+mset_quantile_450k <- dropLociWithSnps(mset_quantile_450k)
+# nrow=423_718
+
+
+# removendo CPGs cross-reativos ref: [https://www.tandfonline.com/doi/full/10.4161/epi.23470]
+mset_quantile_450k <- maxprobes::dropXreactiveLoci(mset_quantile_450k)
+# nrow=391_064
+```
+
+
+```{r mdsPlot quantile450k, fig.width=20, fig.height=8}
+para_png(
+ "mdsPlot(getM(mset_quantile_450k), sampNames = mset_quantile_450k$geo_accession, sampGroups = mset_quantile_450k$statusFumante)",
+ 'Mset_quant450k',
+ units = 'in'
+)
+```
+
+```{r densityPlot quantile}
+
+para_png("densityPlot(getBeta(mset_quantile_450k), sampGroups = mset_quantile_450k$statusFumante, main='Normalização Quantílica')", 'Density-plot-quantilica450k', unit='cm')
+
+```
+
+
+```{r mdsPlot quantile450k by sex, fig.width=20, fig.height=8}
+para_png(
+ "mdsPlot(getM(mset_quantile_450k), sampNames = mset_quantile_450k$geo_accession, sampGroups = mset_quantile_450k$predictedSex)",
+ 'Mset_quant450k_bysex',
+ units = 'in'
+)
+```
 
 
 
 
 
+```{r 450k pca pós filtragens,}
+set.seed(42)
+mset_samp450k = t(assay(sample(mset_quantile_450k, 4000)))
 
+para_png("print(fviz_pca_ind(prcomp(mset_samp450k, center = T, scale.=T), habillage = mset_quantile_450k$statusFumante, axes = c(1, 2), addEllipses = T, ellipse.level=0.95))",
+         'pca-quantile_filtered_comps1-3-450k',
+         units = 'px', width = 900, height=500)
+```
+
+```{r 450k pca arrayDesign}
+para_png("print(fviz_pca_ind(prcomp(mset_samp450k, center = T, scale.=T), habillage = mset_quantile_450k$predictedSex, axes = c(1, 2), addEllipses = T, ellipse.level=0.95))",
+         'pca-quantile_filtered_comps1-3-arrayDesign-450k',
+         units = 'in')
+```
+
+```{r 450k umap array design}
+MSetUmap450k = umap(mset_samp450k, preserve.seed = TRUE)
+para_png("plot(MSetUmap450k$layout, col=factor(mset_quantile_450k$predictedSex), pch=16, main='UMap Usando o Sexo Predito como Grupo', xlab='Dimensão 1', ylab='Dimensão 2')",
+         'UMap-sex-450k',
+         units='px',
+         width=900,
+         height=500,
+)
+```
+
+```{r 450k umap status fumante}
+para_png("plot(MSetUmap450k$layout, col=factor(mset_quantile_450k$statusFumante), pch=16, main='UMap Agrupando por Status de Fumo', xlab='Dimensão 1', ylab='Dimensão 2')",
+         'UMap-statusFumante-450k',
+         units='in')
+
+rm(MSetUmap450k)
+```
+
+
+### testes de hipótese 450k
+
+```{r testes de hipótese 450k}
+design450k = model.matrix(~ mset_quantile_450k$statusFumante)
+colnames(design450k) = c('Intercepto', 'fumante')
+fit450k = lmFit(getM(mset_quantile_450k), design)
+fit450k = eBayes(fit450k)
+tt_fumante450k = topTable(fit450k, )
+tt_fumante450k
+updown_fumante450k = decideTests(fit450k)
+summary(updown_fumante450k)
+```
+
+
+
+
+```{r}
+write.csv(topTable(fit450k, number = 100), file='resultados_cpgs.csv')
+```
+
+
+
+```{r}
+session_info(to_file = TRUE)
+```
 
 
